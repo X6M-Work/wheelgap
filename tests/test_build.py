@@ -1124,7 +1124,13 @@ def test_sdist_names_this_release():
 
 @pytest.mark.parametrize(
     "url",
-    [f"{FILES}/x 1.0/x-1.0.tar.gz", "https://files.pythonhosted.org:99999/x-1.0.tar.gz", f"{FILES}/\x7f/x-1.0.tar.gz"],
+    [
+        f"{FILES}/x 1.0/x-1.0.tar.gz",
+        "https://[files.pythonhosted.org/x-1.0.tar.gz",
+        "https://files.pythonhosted.org /x-1.0.tar.gz",
+        "https://files.pythonhosted.org:99999/x-1.0.tar.gz",
+        f"{FILES}/\x7f/x-1.0.tar.gz",
+    ],
 )
 def test_malformed_lock_urls_are_no_answer(url):
     assert build.where(pkg(url=url), LOCK) is None

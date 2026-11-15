@@ -128,6 +128,98 @@ def test_uv_lock_manifest_that_is_not_a_table_raises(tmp_path):
         load_inputs([str(tmp_path)])
 
 
+@pytest.mark.parametrize(
+    ("lockfile", "template"),
+    [
+        (
+            "uv.lock",
+            'version = 1\n\n[[package]]\nname = "a"\nversion = "1.0"\n'
+            'source = {{ registry = "https://pypi.org/simple" }}\n{field}\n',
+        ),
+        (
+            "pylock.toml",
+            'lock-version = "1.0"\ncreated-by = "test"\n\n[[packages]]\nname = "a"\nversion = "1.0"\n{field}\n',
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        (
+            'sdist = { url = "https://[files.pythonhosted.org/packages/a-1.0.tar.gz" }',
+            "package a has an invalid sdist URL 'https://[files.pythonhosted.org/packages/a-1.0.tar.gz'",
+        ),
+        (
+            'sdist = { url = "https://files.pythonhosted.org /packages/a-1.0.tar.gz" }',
+            "package a has an invalid sdist URL 'https://files.pythonhosted.org /packages/a-1.0.tar.gz'",
+        ),
+        (
+            'sdist = { name = "a-1.0.tar.gz", url = "https://[files.pythonhosted.org/packages/a-1.0.tar.gz" }',
+            "package a has an invalid sdist URL 'https://[files.pythonhosted.org/packages/a-1.0.tar.gz'",
+        ),
+        (
+            'sdist = { url = "https://files.pythonhosted.org:99999/packages/a-1.0.tar.gz" }',
+            "package a has an invalid sdist URL 'https://files.pythonhosted.org:99999/packages/a-1.0.tar.gz'",
+        ),
+        (
+            'wheels = [{ url = "https://[files.pythonhosted.org/packages/a-1.0-py3-none-any.whl" }]',
+            "package a has an invalid wheel URL 'https://[files.pythonhosted.org/packages/a-1.0-py3-none-any.whl'",
+        ),
+        (
+            'wheels = [{ url = "https://files.pythonhosted.org /packages/a-1.0-py3-none-any.whl" }]',
+            "package a has an invalid wheel URL 'https://files.pythonhosted.org /packages/a-1.0-py3-none-any.whl'",
+        ),
+        (
+            'wheels = [{ name = "a-1.0-py3-none-any.whl", url = "https://bad host/a-1.0-py3-none-any.whl" }]',
+            "package a has an invalid wheel URL 'https://bad host/a-1.0-py3-none-any.whl'",
+        ),
+        ("sdist = { url = 5 }", "package a has a sdist `url` that isn't a string"),
+        ("wheels = [{ url = 5 }]", "package a has a wheel `url` that isn't a string"),
+        ("sdist = 5", "package a has an `sdist` that isn't a table"),
+        ("wheels = 5", "package a has a `wheels` that isn't a list"),
+        ('wheels = ["a-1.0-py3-none-any.whl"]', "package a has a wheel entry that isn't a table"),
+    ],
+)
+def test_lockfile_malformed_sdist_or_wheel_url_raises(tmp_path, lockfile, template, field, message):
+    (tmp_path / lockfile).write_text(template.format(field=field), encoding="utf-8")
+    with pytest.raises(SourceError, match=re.escape(f"{lockfile}: {message}")):
+        load_inputs([str(tmp_path / lockfile)])
+
+
+@pytest.mark.parametrize(
+    ("lockfile", "template"),
+    [
+        (
+            "poetry.lock",
+            '[[package]]\nname = "a"\nversion = "1.0"\n{field}\n\n[metadata]\nlock-version = "2.1"\n',
+        ),
+        (
+            "pdm.lock",
+            '[metadata]\ngroups = ["default"]\n\n[[package]]\nname = "a"\nversion = "1.0"\n{field}\n',
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        (
+            'files = [{ file = "a-1.0.tar.gz", url = "https://[files.pythonhosted.org/a-1.0.tar.gz" }]',
+            "package a has an invalid file URL 'https://[files.pythonhosted.org/a-1.0.tar.gz'",
+        ),
+        (
+            'files = [{ file = "a-1.0.tar.gz", url = "https://files.pythonhosted.org /a-1.0.tar.gz" }]',
+            "package a has an invalid file URL 'https://files.pythonhosted.org /a-1.0.tar.gz'",
+        ),
+        ("files = 5", "package a has a `files` that isn't a list"),
+        ('files = ["a-1.0.tar.gz"]', "package a has a file entry that isn't a table"),
+    ],
+)
+def test_poetry_and_pdm_malformed_file_entries_raise(tmp_path, lockfile, template, field, message):
+    (tmp_path / lockfile).write_text(template.format(field=field), encoding="utf-8")
+    with pytest.raises(SourceError, match=re.escape(f"{lockfile}: {message}")):
+        load_inputs([str(tmp_path / lockfile)])
+
+
 def test_uv_lock_dependency_extra_may_be_a_list(tmp_path):
     (tmp_path / "uv.lock").write_text(
         'version = 1\n\n[manifest]\nrequirements = [{ name = "a" }]\n\n[[package]]\nname = "a"\nversion = "1.0"\n'
@@ -1189,6 +1281,16 @@ PIXI_V7 = (Path(__file__).parent / "fixtures" / "pixiproj" / "pixi.lock").read_t
             "location wheelgap can't read",
         ),
         (
+            "https://files.pythonhosted.org/packages/cc/dd/purewheel-3.1-py3-none-any.whl",
+            "https://[files.pythonhosted.org/packages/cc/dd/purewheel-3.1-py3-none-any.whl",
+            "purewheel has a location wheelgap can't read",
+        ),
+        (
+            "https://files.pythonhosted.org/packages/cc/dd/purewheel-3.1-py3-none-any.whl",
+            "https://files.pythonhosted.org /packages/cc/dd/purewheel-3.1-py3-none-any.whl",
+            "purewheel has a location wheelgap can't read",
+        ),
+        (
             "      - pypi: https://files.pythonhosted.org/packages/33/44/nowheels-0.9.tar.gz\n",
             "      - pypi: https://files.pythonhosted.org/packages/33/44/nowheels-0.9.tar.gz\n        extras: [x]\n",
             "unsupported YAML",
@@ -1217,6 +1319,18 @@ def test_pixi_lock_reads_quoted_scalars(tmp_path):
     lock.write_text(text, encoding="utf-8")
     # (A name with '' in it, such as pure'wheel, isn't a valid package name; test_block_yaml_reads covers the escape.)
     assert {"winonly", "purewheel"} <= set(by_name(parse_pixi_lock(lock)))
+
+
+def test_pixi_conda_package_with_malformed_url_is_skipped(tmp_path):
+    lock = tmp_path / "pixi.lock"
+    bad = "https://[conda.anaconda.org/conda-forge/linux-64/openssl-3.6.0-h26f9b46_0.conda"
+    text = PIXI_V7.replace(
+        "https://conda.anaconda.org/conda-forge/linux-64/openssl-3.6.0-h26f9b46_0.conda",
+        bad,
+    )
+    lock.write_text(text, encoding="utf-8")
+    pkgs = parse_pixi_lock(lock).packages
+    assert any(p.skip == "conda" and p.name == "https://" for p in pkgs)
 
 
 @pytest.mark.parametrize(

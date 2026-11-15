@@ -208,7 +208,7 @@ def where(
     ):
         return None
     if pkg.sdist_url and isinstance(pkg.registry, str):  # known_pypi says that registry is PyPI's
-        if unquote(posixpath.basename(urlsplit(pkg.sdist_url).path)) != sdist or not _on_pypi_files(pkg.sdist_url):
+        if not _on_pypi_files(pkg.sdist_url) or unquote(posixpath.basename(urlsplit(pkg.sdist_url).path)) != sdist:
             return None
         return (pkg.registry.rstrip("/"), pkg.key, pkg.version, pkg.sdist_sha256 or ""), pkg.sdist_url
     return (pypi.index_url(), pkg.key, pkg.version, ""), None

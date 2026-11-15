@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlsplit
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -206,16 +206,38 @@ def pythons_outside_lock(source: Source, targets: Iterable[Target], *, bounds_on
     return list(dict.fromkeys(out))
 
 
-def _filename(entry: dict) -> str | None:
+def _parse_lock_url(path: Path, pkg_name: str, what: str, url: object) -> str:
+    """Validate a distribution URL in a lockfile, raising SourceError naming the file and package if it isn't a
+    valid URL (an unclosed IPv6 bracket, a port out of range, whitespace in the host, or a non-string)."""
+    if not isinstance(url, str):
+        raise SourceError(f"{path.name}: package {pkg_name} has a {what} `url` that isn't a string")
+    try:
+        parts = urlsplit(url)
+        _ = parts.port
+    except ValueError:
+        raise SourceError(f"{path.name}: package {pkg_name} has an invalid {what} URL {url!r}") from None
+    if (
+        not url.strip()
+        or ((parts.scheme and parts.scheme != "file" or parts.netloc) and not parts.hostname)
+        or any(c.isspace() or not c.isprintable() or c == "\\" for c in parts.netloc)
+    ):
+        raise SourceError(f"{path.name}: package {pkg_name} has an invalid {what} URL {url!r}")
+    return unquote(Path(parts.path).name)
+
+
+def _filename(entry: object, path: Path, pkg_name: str, what: str = "file") -> str | None:
+    if not isinstance(entry, dict):
+        raise SourceError(f"{path.name}: package {pkg_name} has a {what} entry that isn't a table")
+    url = entry.get("url")
+    url_name = _parse_lock_url(path, pkg_name, what, url) if url is not None else None
     for k in ("filename", "file", "name"):
         if isinstance(entry.get(k), str) and entry[k].endswith((".whl", ".tar.gz", ".zip", ".tar.bz2", ".tgz")):
             return entry[k]
-    url = entry.get("url")
-    if isinstance(url, str):
-        return unquote(Path(urlparse(url).path).name)
-    path = entry.get("path")
-    if isinstance(path, str):
-        return Path(path).name
+    if url_name is not None:
+        return url_name
+    entry_path = entry.get("path")
+    if isinstance(entry_path, str):
+        return Path(entry_path).name
     return None
 
 
@@ -305,10 +327,16 @@ def parse_uv_lock(path: Path) -> Source:
             pkg.skip = kind
         else:
             pkg.registry = src.get("registry")
-            files = [f for f in (_filename(w) for w in p.get("wheels", [])) if f]
-            if p.get("sdist"):
-                files.append(_filename(p["sdist"]) or f"{p['name']}-{p.get('version')}.tar.gz")
-                pkg.sdist_url, pkg.sdist_sha256 = _sdist_source(p["sdist"], "hash")
+            wheels = p.get("wheels", [])
+            if not isinstance(wheels, list):
+                raise SourceError(f"{path.name}: package {pkg.name} has a `wheels` that isn't a list")
+            files = [f for f in (_filename(w, path, pkg.name, "wheel") for w in wheels) if f]
+            sdist = p.get("sdist")
+            if sdist is not None and not isinstance(sdist, dict):
+                raise SourceError(f"{path.name}: package {pkg.name} has an `sdist` that isn't a table")
+            if sdist:
+                files.append(_filename(sdist, path, pkg.name, "sdist") or f"{p['name']}-{p.get('version')}.tar.gz")
+                pkg.sdist_url, pkg.sdist_sha256 = _sdist_source(sdist, "hash")
             pkg.files = files
         i = len(source.packages)
         source.packages.append(pkg)
@@ -660,10 +688,16 @@ def parse_pylock(path: Path) -> Source:
         if any(k in p for k in ("vcs", "directory", "archive")) and "wheels" not in p and "sdist" not in p:
             pkg.skip = next(k for k in ("vcs", "directory", "archive") if k in p)
         else:
-            files = [f for f in (_filename(w) for w in p.get("wheels", [])) if f]
-            if p.get("sdist"):
-                files.append(_filename(p["sdist"]) or f"{p['name']}-{p.get('version')}.tar.gz")
-                pkg.sdist_url, pkg.sdist_sha256 = _sdist_source(p["sdist"], "hashes")
+            wheels = p.get("wheels", [])
+            if not isinstance(wheels, list):
+                raise SourceError(f"{path.name}: package {pkg.name} has a `wheels` that isn't a list")
+            files = [f for f in (_filename(w, path, pkg.name, "wheel") for w in wheels) if f]
+            sdist = p.get("sdist")
+            if sdist is not None and not isinstance(sdist, dict):
+                raise SourceError(f"{path.name}: package {pkg.name} has an `sdist` that isn't a table")
+            if sdist:
+                files.append(_filename(sdist, path, pkg.name, "sdist") or f"{p['name']}-{p.get('version')}.tar.gz")
+                pkg.sdist_url, pkg.sdist_sha256 = _sdist_source(sdist, "hashes")
             pkg.files = files
         pkgs.append(pkg)
     requires = data.get("requires-python")
@@ -715,7 +749,9 @@ def parse_poetry_lock(path: Path) -> Source:
                 entries = legacy_files.get(p["name"])
             # No files recorded at all (old [metadata.hashes] locks): PyPI packages are looked up on the index,
             # packages from another index are skipped (fill_all).
-            pkg.files = None if entries is None else [f for f in (_filename(e) for e in entries) if f]
+            if entries is not None and not isinstance(entries, list):
+                raise SourceError(f"{path.name}: package {pkg.name} has a `files` that isn't a list")
+            pkg.files = None if entries is None else [f for f in (_filename(e, path, pkg.name) for e in entries) if f]
         edges[len(pkgs)] = _poetry_edges(p)
         pkgs.append(pkg)
     # Lock files before 2.1 (all of Poetry 1.x) only record markers on dependency edges, not on
@@ -897,7 +933,9 @@ def parse_pdm_lock(path: Path) -> Source:
                             entries = value
                             break
             if entries is not None:
-                pkg.files = [f for f in (_filename(e) for e in entries) if f]
+                if not isinstance(entries, list):
+                    raise SourceError(f"{path.name}: package {pkg.name} has a `files` that isn't a list")
+                pkg.files = [f for f in (_filename(e, path, pkg.name) for e in entries) if f]
             # Not in either place: leave files as None so the PyPI lookup fills them in.
         _add_once(pkgs, seen, pkg)
     return Source(
@@ -964,7 +1002,7 @@ def parse_pipfile_lock(path: Path) -> Source:
 
 def _is_public_pypi(url: str | None) -> bool:
     try:
-        return url is not None and urlparse(url).hostname in ("pypi.org", "pypi.python.org")
+        return url is not None and urlsplit(url).hostname in ("pypi.org", "pypi.python.org")
     except ValueError:  # e.g. "https://[bad/simple": not something we can call PyPI
         return False
 
@@ -1649,7 +1687,11 @@ def _pixi_conda_name(location: str, selector: dict, entry: dict | None) -> tuple
         if isinstance(record.get("name"), str):
             version = record.get("version")
             return record["name"], version if isinstance(version, str) else None
-    if m := _CONDA_ARCHIVE_RE.match(unquote(Path(urlparse(location).path).name)):
+    try:
+        archive = unquote(Path(urlsplit(location).path).name)
+    except ValueError:
+        archive = ""
+    if m := _CONDA_ARCHIVE_RE.match(archive):
         return m.group(1), m.group(2)
     return location.split("[", 1)[0].split(" @ ", 1)[0].strip() or location, None
 
@@ -1660,7 +1702,13 @@ def _pixi_pypi_package(entry: dict, indexes: list[str], where: str) -> tuple[Pac
     pkg = Package(name, entry.get("version"), origin=where)
     scheme = m.group(1).lower() if (m := re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", location)) else None
     if scheme in ("http", "https"):
-        url = urlparse(location)
+        try:
+            url = urlsplit(location)
+            _ = url.port
+        except ValueError:
+            raise SourceError(f"{where}: {name} has a location wheelgap can't read: {location!r}") from None
+        if not url.hostname or any(c.isspace() or not c.isprintable() or c == "\\" for c in url.netloc):
+            raise SourceError(f"{where}: {name} has a location wheelgap can't read: {location!r}")
         filename = unquote(Path(url.path).name)
         index = entry.get("index")
         if isinstance(index, str):
