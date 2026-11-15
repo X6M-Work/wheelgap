@@ -584,7 +584,7 @@ def _narrow_candidates(
         candidates = matched or candidates  # retain conservative fallback for incomplete lock metadata
     if edge_source is not None and source.uv_packages is not None:
         uv_packages = source.uv_packages
-        sourced = [i for i in candidates if i < len(uv_packages) and uv_packages[i].get("source") == edge_source]
+        sourced = [i for i in candidates if uv_packages[i].get("source") == edge_source]
         candidates = sourced or candidates
     return candidates
 

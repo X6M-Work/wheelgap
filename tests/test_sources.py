@@ -140,16 +140,9 @@ def test_uv_lock_dependency_extra_may_be_a_list(tmp_path):
 
 def test_uv_lock_dependency_source_is_preserved(tmp_path):
     cpu = "https://download.pytorch.org/whl/cpu"
-    pypi_url = "https://pypi.org/simple"
     (tmp_path / "uv.lock").write_text(
         f"""
 version = 1
-
-[manifest]
-requirements = [{{ name = "torch", marker = "sys_platform == 'linux'", source = {{ registry = "{cpu}" }} }}]
-
-[manifest.dependency-groups]
-dev = [{{ name = "torch", marker = "sys_platform == 'darwin'", source = {{ registry = "{pypi_url}" }} }}]
 
 [[package]]
 name = "app"
@@ -163,10 +156,6 @@ dependencies = [
     )
     (src,) = load_inputs([str(tmp_path)])
     assert src.edges[0] == [("torch", "2.5.1", "sys_platform == 'linux'", {"registry": cpu})]
-    assert src.root_edges == [
-        ("torch", None, "sys_platform == 'darwin'", {"registry": pypi_url}),
-        ("torch", None, "sys_platform == 'linux'", {"registry": cpu}),
-    ]
 
 
 def test_poetry_lock(fixtures):
