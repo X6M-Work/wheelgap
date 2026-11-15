@@ -1758,6 +1758,15 @@ def test_hidden_line_counts_wheels_and_ignored_gaps_apart():
     assert cli.hidden_line([clean, clean, accepted]) == (
         "2 packages with wheels for every target and 1 with only ignored gaps hidden"
     )
+    # A range split per Python: its clean release is hidden while its other release is shown with a gap.
+    split = Package("s", None)
+    old_release = Row(Package("s", "1"), {lin: Status.WHEEL, musl: Status.WHEEL}, input_package=split)
+    new_release = Row(Package("s", "2"), {lin: Status.WHEEL, musl: Status.SOURCE}, input_package=split)
+    assert cli.hidden_line([old_release], [new_release]) == "1 other release of a package with gaps hidden"
+    assert cli.hidden_line([clean, old_release], [new_release]) == (
+        "1 package with wheels for every target and 1 other release of a package with gaps hidden"
+    )
+    assert cli.hidden_line([old_release], []) == "1 package with wheels for every target hidden"
 
 
 def test_ignore_on_one_target_quiet(capsys, fixtures):
@@ -3355,7 +3364,9 @@ def test_range_split_one_clean_one_gap_counts_as_one_package(capsys, fake_pypi, 
     code, out, _ = run(capsys, *base, "--color", "never")
     assert code == 1
     assert "· 1 package ·" in out
-    assert "1 package with wheels for every target hidden (--all to show)" in out
+    # The clean 3.9 release is the same requirement, not another package with wheels everywhere.
+    assert "1 other release of a package with gaps hidden (--all to show)" in out
+    assert "package with wheels for every target" not in out
     assert "1 of 1 package has gaps: 1 will build from source." in out
 
     code, out, _ = run(capsys, *base, "-q", "--color", "never")
@@ -3370,7 +3381,7 @@ def test_range_split_one_clean_one_gap_counts_as_one_package(capsys, fake_pypi, 
     assert code == 1
     assert "### wheelgap: 1 of 1 package has gaps" in out
     assert "· 1 package ·" in out
-    assert "1 package with wheels for every target hidden (`--all` to show)." in out
+    assert "1 other release of a package with gaps hidden (`--all` to show)." in out
     assert "1 of 1 package has gaps: 1 will build from source." in out
 
     code, out, _ = run(capsys, *base, "--json")

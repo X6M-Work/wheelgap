@@ -491,9 +491,17 @@ def _group_rows(rows: list[Row]) -> list[list[Row]]:
     return list(groups.values())
 
 
-def hidden_line(hidden: list[Row]) -> str:
-    """'3 packages with wheels for every target hidden', not counting those with only ignored gaps as such."""
-    groups = _group_rows(hidden)
+def hidden_line(hidden: list[Row], shown: list[Row] | None = None) -> str:
+    """'3 packages with wheels for every target hidden', not counting those with only ignored gaps as such.
+
+    A hidden release of a range whose other release is shown (split per Python) isn't another package: it's
+    counted as an other release of a package with gaps, so the line doesn't contradict the gap summary.
+    """
+    shown_inputs = {id(r.input_package) for r in shown or [] if r.input_package is not None}
+    rest = [r for r in hidden if r.input_package is None or id(r.input_package) not in shown_inputs]
+    others = len(hidden) - len(rest)
+    of = len({id(r.input_package) for r in hidden if r.input_package is not None} & shown_inputs)
+    groups = _group_rows(rest)
     only_ignored = sum(1 for group in groups if any(ignored_gaps(r) for r in group))
     wheels = len(groups) - only_ignored
     parts = []
@@ -502,6 +510,10 @@ def hidden_line(hidden: list[Row]) -> str:
     if only_ignored:
         noun = "" if wheels else f" package{'s' * (only_ignored != 1)}"
         parts.append(f"{only_ignored}{noun} with only ignored gaps")
+    if others:
+        parts.append(
+            f"{others} other release{'s' * (others != 1)} of {'a package' if of == 1 else 'packages'} with gaps"
+        )
     return " and ".join(parts) + " hidden"
 
 
@@ -1095,7 +1107,7 @@ def render_markdown(
         out.append("")
         hidden = [] if args.all else [r for r in rows if r.ok]
         if hidden:
-            out += [f"{hidden_line(hidden)} (`--all` to show).", ""]
+            out += [f"{hidden_line(hidden, shown)} (`--all` to show).", ""]
 
     if gaps:
         per_target = shown_target_lines(gaps, targets, plain, advisory)
@@ -1898,7 +1910,7 @@ def _main(argv: list[str]) -> int:
         print()
         hidden = [] if args.all else [r for r in rows if r.ok]
         if hidden:
-            print(style.dim(f"{hidden_line(hidden)} (--all to show)"))
+            print(style.dim(f"{hidden_line(hidden, shown)} (--all to show)"))
         if args.explain and gaps:
             if hidden:
                 print()
