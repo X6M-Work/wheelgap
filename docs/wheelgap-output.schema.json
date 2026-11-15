@@ -88,7 +88,11 @@
             "additionalProperties": false,
             "required": ["packages", "with_gaps"],
             "properties": {
-                "packages": {"type": "integer", "minimum": 0, "description": "Number of entries in packages."},
+                "packages": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Distinct input packages checked; a range resolved per Python counts once even when it produces more than one row in packages."
+                },
                 "with_gaps": {
                     "type": "integer",
                     "minimum": 0,
